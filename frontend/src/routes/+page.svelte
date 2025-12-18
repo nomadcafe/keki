@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { goto } from "$app/navigation";
-  import { authenticatedFetch, getApiKey, getDefaultProvider } from "$lib/auth";
+  import { authenticatedFetch, getApiKey, getDefaultProvider } from "../lib/auth";
   import { t } from "$lib/i18n";
   // getApiUrl は削除されました - 直接URLパスを使用
 
