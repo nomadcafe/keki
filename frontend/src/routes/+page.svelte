@@ -451,7 +451,7 @@
       // APIキーを取得（localStorageから）
       const defaultProvider = getDefaultProvider() || "openai";
       const apiKey = getApiKey(defaultProvider);
-      
+
       const response = await fetch(`/api/jobs/${jobId}/generate-dialogue`, {
         method: "POST",
         headers: {

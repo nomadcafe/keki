@@ -1,5 +1,12 @@
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_audioclips, concatenate_videoclips
-from moviepy.audio.AudioClip import AudioClip
+from moviepy.editor import (
+    ImageClip,
+    AudioFileClip,
+    concatenate_audioclips,
+    concatenate_videoclips,
+    CompositeVideoClip,
+)
+from moviepy.audio.AudioClip import AudioClip, CompositeAudioClip
+from moviepy.audio import fx as afx
 import numpy as np
 from pathlib import Path
 from scipy.io import wavfile
@@ -7,9 +14,17 @@ from scipy import signal
 import os
 import tempfile
 
+
 class DialogueVideoCreator:
-    def __init__(self):
+    def __init__(self, bgm_path=None, bgm_volume: float = 0.15):
+        """
+        :param bgm_path: 背景BGMのファイルパス（未指定の場合は環境変数 VIDEO_BGM_PATH を使用）
+        :param bgm_volume: BGM 音量（0.0〜1.0）
+        """
         self.temp_files = []
+        # BGM 設定（オプション）
+        self.bgm_path = bgm_path or os.getenv("VIDEO_BGM_PATH") or ""
+        self.bgm_volume = bgm_volume
     
     def create_silence(self, duration):
         """無音クリップを作成"""
@@ -137,11 +152,14 @@ class DialogueVideoCreator:
             clip = self.create_dialogue_slide(image_path, audio_infos)
             clips.append(clip)
         
-        # すべてのクリップを連結
+        # すべてのクリップを連結（スライド間をクロスフェード）
         print(f"動画を連結中... 合計 {len(clips)} クリップ")
         print(f"dialogue_audio_info のキー: {list(dialogue_audio_info.keys())}")
-        final_video = concatenate_videoclips(clips)
+        final_video = self._concatenate_with_crossfade(clips, crossfade_duration=0.4)
         print(f"最終動画の長さ: {final_video.duration} 秒")
+
+        # オプション：背景BGMをミックス
+        final_video = self._apply_background_music(final_video)
         
         # 動画全体の最後に長めのフェードアウトを追加（完全にブチっという音を防ぐ）
         fade_duration = 1.0  # 1.0秒のフェードアウトに延長
@@ -179,3 +197,104 @@ class DialogueVideoCreator:
         self.cleanup_temp_files()
         
         print(f"動画出力完了: {output_path}")
+
+    def _concatenate_with_crossfade(self, clips, crossfade_duration: float = 0.4):
+        """
+        スライド同士をクロスフェードでつなぐ
+        - crossfade_duration: 各スライドの重なり時間（秒）
+        """
+        if not clips:
+            raise ValueError("連結するクリップが存在しません")
+
+        if len(clips) == 1:
+            return clips[0]
+
+        timeline_clips = []
+        # 最初のクリップはそのまま配置
+        prev_clip = clips[0]
+        timeline_clips.append(prev_clip.set_start(0))
+        current_time = prev_clip.duration
+
+        for idx in range(1, len(clips)):
+            clip = clips[idx]
+
+            # クリップ長に応じて安全なクロスフェード時間を計算
+            safe_cf = min(
+                crossfade_duration,
+                max(0.0, prev_clip.duration / 2.0),
+                max(0.0, clip.duration / 2.0),
+            )
+
+            if safe_cf <= 0:
+                # クロスフェードできない場合は通常の連結
+                placed = clip.set_start(current_time)
+                current_time += clip.duration
+            else:
+                # 直前のクリップの終わり safe_cf 秒前からフェードインしながら重ねる
+                start_time = max(0.0, current_time - safe_cf)
+                try:
+                    placed = clip.set_start(start_time).crossfadein(safe_cf)
+                except AttributeError:
+                    # crossfadein メソッドが無い場合のフォールバック（フェードなしでオーバーラップ）
+                    placed = clip.set_start(start_time)
+
+                current_time = start_time + clip.duration
+
+            timeline_clips.append(placed)
+            prev_clip = clip
+
+        final = CompositeVideoClip(timeline_clips)
+        final.duration = current_time
+        return final
+
+    def _apply_background_music(self, video_clip):
+        """
+        背景BGMを動画にミックス（BGMパスが設定されている場合のみ）
+        - VIDEO_BGM_PATH またはコンストラクタ引数でパスを指定
+        - 自動的に動画の長さまでループし、音量とフェードイン/アウトを適用
+        """
+        if not self.bgm_path:
+            # BGM 未設定の場合はそのまま返す
+            return video_clip
+
+        bgm_file = Path(self.bgm_path)
+        if not bgm_file.exists():
+            print(f"BGMファイルが見つかりません: {bgm_file}")
+            return video_clip
+
+        bgm_audio = None
+        try:
+            bgm_audio = AudioFileClip(str(bgm_file))
+
+            # 動画の長さに合わせてループし、音量を調整
+            bgm = bgm_audio.fx(afx.audio_loop, duration=video_clip.duration).volumex(
+                self.bgm_volume
+            )
+
+            # BGM 自体にもフェードイン/アウトを適用して違和感を低減
+            from moviepy.audio.fx.audio_fadein import audio_fadein
+            from moviepy.audio.fx.audio_fadeout import audio_fadeout
+
+            fade_dur = min(2.0, video_clip.duration / 4)
+            if fade_dur > 0:
+                bgm = audio_fadein(bgm, fade_dur)
+                bgm = audio_fadeout(bgm, fade_dur)
+
+            # 既存のナレーション音声とミックス
+            if video_clip.audio is not None:
+                mixed_audio = CompositeAudioClip([video_clip.audio, bgm])
+            else:
+                mixed_audio = bgm
+
+            return video_clip.set_audio(mixed_audio)
+
+        except Exception as e:
+            print(f"BGMミックス中にエラー: {e}")
+            return video_clip
+
+        finally:
+            try:
+                if bgm_audio is not None:
+                    bgm_audio.close()
+            except Exception:
+                pass

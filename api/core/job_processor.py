@@ -211,7 +211,7 @@ class JobProcessor:
                 job_id, pdf_path, jobs_db
             )
             await async_worker.wait_for_task(f"pdf_{job_id}")
-
+            
             # 3. 対話データはアップロード時または編集画面で既に生成済みとみなし、
             #    ここでは音声生成と動画作成のみを行う
             # 4. 音声生成（非同期）

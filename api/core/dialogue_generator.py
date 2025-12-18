@@ -23,7 +23,7 @@ class DialogueGenerator:
         
         # APIキーを取得（引数で指定された場合はそれを使用、否则は設定から）
         if not api_key:
-            api_key = self.settings_manager.get_api_key(provider_name)
+        api_key = self.settings_manager.get_api_key(provider_name)
         
         if not api_key:
             # 後方互換性のため、OpenAI APIキーをチェック

@@ -126,11 +126,11 @@
 			// localStorageに保存（サーバーには保存しない）
 			setApiKey(providerId, newApiKeys[providerId]);
 			setDefaultProvider(providerId);
-			
-			// 入力フィールドをクリア
-			newApiKeys[providerId] = '';
-			// 設定を再読み込み
-			await loadSettings();
+
+				// 入力フィールドをクリア
+				newApiKeys[providerId] = '';
+				// 設定を再読み込み
+				await loadSettings();
 			alert('設定を保存しました（ブラウザに保存されました）');
 		} catch (error) {
 			console.error('設定の保存中にエラーが発生しました:', error);
@@ -161,8 +161,8 @@
 				}
 			}
 			
-			await loadSettings();
-			alert('設定を削除しました');
+				await loadSettings();
+				alert('設定を削除しました');
 		} catch (error) {
 			console.error('設定の削除中にエラーが発生しました:', error);
 			alert('設定の削除中にエラーが発生しました');
