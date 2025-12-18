@@ -54,8 +54,14 @@ async def upload_pdf(
 ):
     """PDFファイルをアップロードしてジョブを作成"""
     
-    # ファイル検証
-    if not file.filename.endswith('.pdf'):
+    # ファイル名のサニタイズ（パストラバーサル対策）
+    original_pdf_filename = file.filename or ""
+    safe_pdf_name = Path(original_pdf_filename).name  # パス要素を除去
+    if ".." in safe_pdf_name or "/" in safe_pdf_name or "\\" in safe_pdf_name:
+        raise HTTPException(status_code=400, detail="不正なファイル名です")
+
+    # ファイル検証（拡張子）
+    if not safe_pdf_name.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDFファイルのみ対応しています")
     
     # ファイルサイズ検証（100MB）
@@ -69,15 +75,21 @@ async def upload_pdf(
     job_dir = UPLOAD_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     
-    pdf_path = job_dir / file.filename
+    pdf_path = job_dir / safe_pdf_name
     with open(pdf_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
     # ナレッジファイルの処理
     knowledge_text = ""
     if knowledge_file and knowledge_file.filename:
+        # ナレッジファイルのファイル名をサニタイズ
+        original_knowledge_filename = knowledge_file.filename
+        safe_knowledge_name = Path(original_knowledge_filename).name
+        if ".." in safe_knowledge_name or "/" in safe_knowledge_name or "\\" in safe_knowledge_name:
+            raise HTTPException(status_code=400, detail="不正なナレッジファイル名です")
+
         # ナレッジファイルを保存
-        knowledge_path = job_dir / knowledge_file.filename
+        knowledge_path = job_dir / safe_knowledge_name
         with open(knowledge_path, "wb") as buffer:
             shutil.copyfileobj(knowledge_file.file, buffer)
         
