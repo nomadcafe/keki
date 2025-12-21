@@ -240,7 +240,9 @@
 			← 戻る
 		</button>
 		<h1>⚙️ LLMプロバイダー設定</h1>
-		<div style="width: 100px;"></div>
+		<div class="header-actions">
+			<a href="/history" class="nav-link">📋 履歴</a>
+		</div>
 	</div>
 
 	{#if isLoading}
@@ -431,6 +433,27 @@
 	}
 
 	.back-button:hover {
+		background-color: #4b5563;
+	}
+
+	.header-actions {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+	}
+
+	.nav-link {
+		background-color: #6b7280;
+		color: white;
+		padding: 0.5rem 1rem;
+		border-radius: 8px;
+		text-decoration: none;
+		font-size: 0.9rem;
+		transition: background-color 0.3s ease;
+		white-space: nowrap;
+	}
+
+	.nav-link:hover {
 		background-color: #4b5563;
 	}
 

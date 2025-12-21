@@ -271,31 +271,40 @@ async def convert_pdf_to_slides(
 
         error_msg = f"PDFProcessor import error: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
-        job = jobs_db.get(job_id)
-        if job:
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.error_code = StatusCode.PDF_PROCESSING_ERROR
-            job.updated_at = datetime.now()
+        # データベースにエラー状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status="failed",
+            status_code=StatusCode.FAILED,
+            error_code=StatusCode.PDF_PROCESSING_ERROR
+        )
         return
 
     try:
-        job = jobs_db[job_id]
-        job.progress = 10
-        job.status_code = StatusCode.PDF_PROCESSING
-        job.updated_at = datetime.now()
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status="processing",
+            status_code=StatusCode.PDF_PROCESSING,
+            progress=10
+        )
 
         # PDFをスライドに変換
         processor = PDFProcessor(job_id, Path.cwd())
         slide_count = processor.convert_pdf_to_slides(pdf_path)
 
-        job.progress = 15
-        job.updated_at = datetime.now()
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            progress=15
+        )
 
         # 進捗更新用のコールバック
         def update_progress(message: str, progress: float):
-            job.progress = 15 + int(progress * 0.8)
-            job.updated_at = datetime.now()
+            JobService.update_job(
+                job_id=job_id,
+                progress=15 + int(progress * 0.8)
+            )
 
         # メタデータがある場合はスピーカー情報と会話スタイル、ナレッジを取得
         speaker_info = None
@@ -318,7 +327,10 @@ async def convert_pdf_to_slides(
                 combined_prompt = additional_knowledge
 
         # 対話データを生成（APIキーを渡す）
-        job.status_code = StatusCode.DIALOGUE_GENERATING
+        JobService.update_job(
+            job_id=job_id,
+            status_code=StatusCode.DIALOGUE_GENERATING
+        )
         # メタデータからAPIキーとプロバイダーを取得
         api_key_to_use = api_key or (metadata.get("api_key") if metadata else None)
         provider_to_use = provider or (metadata.get("provider") if metadata else None)
@@ -334,22 +346,25 @@ async def convert_pdf_to_slides(
         )
 
         # スライドと対話スクリプトの準備完了
-        job.status = "slides_ready"
-        job.status_code = StatusCode.DIALOGUE_COMPLETED
-        job.progress = 50
-        job.updated_at = datetime.now()
+        JobService.update_job(
+            job_id=job_id,
+            status="slides_ready",
+            status_code=StatusCode.DIALOGUE_COMPLETED,
+            progress=50
+        )
 
     except Exception as e:
         import traceback
 
         error_msg = f"Error in convert_pdf_to_slides: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
-        job = jobs_db.get(job_id)
-        if job:
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.error_code = StatusCode.PDF_PROCESSING_ERROR
-            job.updated_at = datetime.now()
+        # データベースにエラー状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status="failed",
+            status_code=StatusCode.FAILED,
+            error_code=StatusCode.PDF_PROCESSING_ERROR
+        )
 
 
 async def generate_complete_video(job_id: str):
@@ -367,23 +382,33 @@ async def generate_complete_video(job_id: str):
         processor = PDFProcessor(job_id, Path.cwd())
         
         if not slides_dir.exists() or not list(slides_dir.glob("slide_*.png")):
-            job.status_code = StatusCode.PDF_PROCESSING
-            job.progress = 10
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.PDF_PROCESSING,
+                progress=10
+            )
             
             pdf_files = list(job_dir.glob("*.pdf"))
             if not pdf_files:
                 raise Exception("PDFファイルが見つかりません")
             
             pdf_path = str(pdf_files[0])
-            job.status_code = StatusCode.PDF_GENERATING_SLIDES
-            job.progress = 15
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status_code=StatusCode.PDF_GENERATING_SLIDES,
+                progress=15
+            )
             
             slide_count = processor.convert_pdf_to_slides(pdf_path)
         else:
-            job.progress = 20
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                progress=20
+            )
             slide_count = len(list(slides_dir.glob("slide_*.png")))
         
         # 2. 対話データの確認・生成
@@ -391,15 +416,21 @@ async def generate_complete_video(job_id: str):
         dialogue_path = data_dir / "dialogue_narration_original.json"
         
         if not dialogue_path.exists():
-            job.status_code = StatusCode.DIALOGUE_GENERATING
-            job.progress = 25
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.DIALOGUE_GENERATING,
+                progress=25
+            )
             
             def update_progress(message: str, progress: float):
-                if "生成中" in message:
-                    job.status_code = StatusCode.DIALOGUE_PROCESSING
-                job.progress = 25 + int(progress * 0.35)
-                job.updated_at = datetime.now()
+                status_code = StatusCode.DIALOGUE_PROCESSING if "生成中" in message else StatusCode.DIALOGUE_GENERATING
+                JobService.update_job(
+                    job_id=job_id,
+                    status_code=status_code,
+                    progress=25 + int(progress * 0.35)
+                )
             
             target_duration = job.target_duration or 10
             metadata_path = job_dir / "metadata.json"
@@ -429,13 +460,20 @@ async def generate_complete_video(job_id: str):
                 provider=provider_from_metadata
             )
         else:
-            job.progress = 60
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                progress=60
+            )
         
         # 3. 音声生成
-        job.status_code = StatusCode.AUDIO_GENERATING
-        job.progress = 60
-        job.updated_at = datetime.now()
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status="processing",
+            status_code=StatusCode.AUDIO_GENERATING,
+            progress=60
+        )
         
         audio_generator = AudioGenerator(job_id, Path.cwd())
         audio_count = audio_generator.generate_audio_files(
@@ -446,27 +484,40 @@ async def generate_complete_video(job_id: str):
         )
         
         # 4. 動画作成
-        job.status_code = StatusCode.VIDEO_CREATING
-        job.progress = 80
-        job.updated_at = datetime.now()
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status_code=StatusCode.VIDEO_CREATING,
+            progress=80
+        )
         
         video_creator = VideoCreator(job_id, Path.cwd())
-        job.status_code = StatusCode.VIDEO_ENCODING
-        job.progress = 85
-        job.updated_at = datetime.now()
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status_code=StatusCode.VIDEO_ENCODING,
+            progress=85
+        )
         
         video_path = video_creator.create_video()
         
         # 動画ファイナライズ
-        job.status_code = StatusCode.VIDEO_FINALIZING
-        job.progress = 95
-        job.updated_at = datetime.now()
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status_code=StatusCode.VIDEO_FINALIZING,
+            progress=95
+        )
         
         # 5. 完了
-        job.status = "completed"
-        job.status_code = StatusCode.COMPLETED
-        job.progress = 100
-        job.result_url = f"/api/jobs/{job_id}/download"
+        # データベースに状態を保存
+        JobService.update_job(
+            job_id=job_id,
+            status="completed",
+            status_code=StatusCode.COMPLETED,
+            progress=100,
+            result_url=f"/api/jobs/{job_id}/download"
+        )
         job.error_code = None
         job.updated_at = datetime.now()
         
@@ -1138,11 +1189,14 @@ async def generate_video_complete(
         json.dump(video_settings, f, ensure_ascii=False, indent=2)
     
     # ステータス更新（エラー状態をリセットして再試行を開始）
-    job.status = "processing"
-    job.status_code = StatusCode.PROCESSING
-    job.error_code = None
-    job.progress = 5
-    job.updated_at = datetime.now()
+    # データベースに状態を保存
+    JobService.update_job(
+        job_id=job_id,
+        status="processing",
+        status_code=StatusCode.PROCESSING,
+        error_code=None,
+        progress=5
+    )
     
     # 非同期で全工程を実行
     asyncio.create_task(JobProcessor.process_complete_video_async(job_id, jobs_db))

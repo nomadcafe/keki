@@ -1018,6 +1018,7 @@
         <p>PDFから動画を生成</p>
       </div>
       <div class="header-actions">
+        <a href="/history" class="settings-link"> 📋 履歴 </a>
         <a href="/settings" class="settings-link"> ⚙️ LLM設定 </a>
       </div>
     </div>
@@ -1814,11 +1815,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    width: 100%;
   }
 
-  .header-content > div {
+  .header-content > div:first-child {
     text-align: center;
     flex: 1;
+  }
+
+  .header-content > div:last-child {
+    flex-shrink: 0;
+    display: flex;
+    gap: 0.5rem;
   }
 
   .settings-link {

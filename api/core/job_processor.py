@@ -16,6 +16,7 @@ sys.path.append(str(project_root))
 
 from api.core.status_codes import StatusCode
 from api.core.async_worker import async_worker
+from api.database.job_service import JobService
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -30,28 +31,36 @@ class JobProcessor:
         try:
             from api.core.pdf_processor import PDFProcessor
             
-            job = jobs_db[job_id]
-            job.status_code = StatusCode.PDF_PROCESSING
-            job.progress = 10
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.PDF_PROCESSING,
+                progress=10
+            )
             
             processor = PDFProcessor(job_id, Path.cwd())
             slide_count = processor.convert_pdf_to_slides(pdf_path)
             
-            job.status_code = StatusCode.PDF_COMPLETED
-            job.progress = 25
-            job.error_code = None  # エラーコードをクリア
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status_code=StatusCode.PDF_COMPLETED,
+                progress=25,
+                error_code=None
+            )
             
             logger.info(f"PDF処理完了: {job_id}, スライド数: {slide_count}")
             return slide_count
             
         except Exception as e:
-            job = jobs_db[job_id]
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.error_code = StatusCode.PDF_PROCESSING_ERROR
-            job.updated_at = datetime.now()
+            # データベースにエラー状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="failed",
+                status_code=StatusCode.FAILED,
+                error_code=StatusCode.PDF_PROCESSING_ERROR
+            )
             logger.error(f"PDF処理エラー {job_id}: {str(e)}")
             raise
     
@@ -63,10 +72,13 @@ class JobProcessor:
             from api.core.dialogue_generator import DialogueGenerator
             from api.core.text_extractor import TextExtractor
             
-            job = jobs_db[job_id]
-            job.status_code = StatusCode.DIALOGUE_GENERATING
-            job.progress = 30
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.DIALOGUE_GENERATING,
+                progress=30
+            )
             
             # PDFファイルからテキストを抽出
             job_dir = Path.cwd() / "uploads" / job_id
@@ -117,19 +129,24 @@ class JobProcessor:
             finally:
                 loop.close()
             
-            job.status_code = StatusCode.DIALOGUE_COMPLETED
-            job.progress = 60
-            job.error_code = None  # エラーコードをクリア
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status_code=StatusCode.DIALOGUE_COMPLETED,
+                progress=60,
+                error_code=None
+            )
             
             logger.info(f"対話生成完了: {job_id}")
             
         except Exception as e:
-            job = jobs_db[job_id]
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.error_code = StatusCode.DIALOGUE_GENERATION_ERROR
-            job.updated_at = datetime.now()
+            # データベースにエラー状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="failed",
+                status_code=StatusCode.FAILED,
+                error_code=StatusCode.DIALOGUE_GENERATION_ERROR
+            )
             logger.error(f"対話生成エラー {job_id}: {str(e)}")
             raise
     
@@ -140,10 +157,13 @@ class JobProcessor:
         try:
             from api.core.audio_generator import AudioGenerator
             
-            job = jobs_db[job_id]
-            job.status_code = StatusCode.AUDIO_GENERATING
-            job.progress = 65
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.AUDIO_GENERATING,
+                progress=65
+            )
             
             generator = AudioGenerator(job_id, Path.cwd())
             generator.generate_audio_files(
@@ -153,19 +173,24 @@ class JobProcessor:
                 volume_scale=volume_scale
             )
             
-            job.status_code = StatusCode.AUDIO_COMPLETED
-            job.progress = 85
-            job.error_code = None  # エラーコードをクリア
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status_code=StatusCode.AUDIO_COMPLETED,
+                progress=85,
+                error_code=None
+            )
             
             logger.info(f"音声生成完了: {job_id}")
             
         except Exception as e:
-            job = jobs_db[job_id]
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.error_code = StatusCode.AUDIO_GENERATION_ERROR
-            job.updated_at = datetime.now()
+            # データベースにエラー状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="failed",
+                status_code=StatusCode.FAILED,
+                error_code=StatusCode.AUDIO_GENERATION_ERROR
+            )
             logger.error(f"音声生成エラー {job_id}: {str(e)}")
             raise
     
@@ -176,10 +201,13 @@ class JobProcessor:
             from api.core.video_creator import VideoCreator
             import json
             
-            job = jobs_db[job_id]
-            job.status_code = StatusCode.VIDEO_CREATING
-            job.progress = 90
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.VIDEO_CREATING,
+                progress=90
+            )
             
             # 動画設定を読み込み（存在する場合）
             video_settings_path = Path.cwd() / "data" / job_id / "video_settings.json"
@@ -201,7 +229,18 @@ class JobProcessor:
                 except Exception as e:
                     logger.warning(f"動画設定の読み込みエラー: {e}")
             
+            logger.info(f"動画作成を開始: {job_id}")
             creator = VideoCreator(job_id, Path.cwd())
+            
+            # 動画作成中に進捗を更新（95%）
+            JobService.update_job(
+                job_id=job_id,
+                status="processing",
+                status_code=StatusCode.VIDEO_ENCODING,
+                progress=95
+            )
+            logger.info(f"動画エンコーディング中: {job_id} (この処理には数分かかる場合があります)")
+            
             video_path = creator.create_video(
                 bgm_enabled=bgm_enabled,
                 bgm_path=bgm_path,
@@ -210,22 +249,27 @@ class JobProcessor:
                 transition_duration=transition_duration
             )
             
-            job.status = "completed"
-            job.status_code = StatusCode.COMPLETED
-            job.progress = 100
-            job.result_url = f"/api/jobs/{job_id}/download"
-            job.error_code = None  # エラーコードをクリア
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="completed",
+                status_code=StatusCode.COMPLETED,
+                progress=100,
+                result_url=f"/api/jobs/{job_id}/download",
+                error_code=None
+            )
             
             logger.info(f"動画作成完了: {job_id}, パス: {video_path}")
             return video_path
             
         except Exception as e:
-            job = jobs_db[job_id]
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.error_code = StatusCode.VIDEO_CREATION_ERROR
-            job.updated_at = datetime.now()
+            # データベースにエラー状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="failed",
+                status_code=StatusCode.FAILED,
+                error_code=StatusCode.VIDEO_CREATION_ERROR
+            )
             logger.error(f"動画作成エラー {job_id}: {str(e)}")
             raise
 
@@ -234,9 +278,11 @@ class JobProcessor:
                                          additional_prompt: Optional[str] = None) -> None:
         """完全な動画生成フローを非同期で実行"""
         try:
-            job = jobs_db[job_id]
-            job.status = "processing"
-            job.updated_at = datetime.now()
+            # データベースに状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="processing"
+            )
             
             # 1. PDFファイルパスを取得
             job_dir = Path.cwd() / "uploads" / job_id
@@ -275,9 +321,11 @@ class JobProcessor:
             logger.info(f"完全動画生成完了: {job_id}")
             
         except Exception as e:
-            job = jobs_db[job_id]
-            job.status = "failed"
-            job.status_code = StatusCode.FAILED
-            job.updated_at = datetime.now()
+            # データベースにエラー状態を保存
+            JobService.update_job(
+                job_id=job_id,
+                status="failed",
+                status_code=StatusCode.FAILED
+            )
             logger.error(f"完全動画生成エラー {job_id}: {str(e)}")
             raise
