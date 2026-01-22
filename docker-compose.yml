@@ -6,6 +6,7 @@ services:
       - "50021:50021"
     networks:
       - app-network
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -41,7 +42,8 @@ services:
       - voicevox
     networks:
       - app-network
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --limit-max-requests 1000 --limit-concurrency 100 --timeout-keep-alive 30
+    restart: unless-stopped
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --limit-max-requests 1000 --limit-concurrency 100 --timeout-keep-alive 30 --timeout-graceful-shutdown 30
     deploy:
       resources:
         limits:
@@ -67,6 +69,7 @@ services:
       - api
     networks:
       - app-network
+    restart: unless-stopped
     deploy:
       resources:
         limits:

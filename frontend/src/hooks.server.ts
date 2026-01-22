@@ -38,27 +38,50 @@ export const handle: Handle = async ({ event, resolve }) => {
             });
             
             console.log(`Sending ${event.request.method} request to ${apiUrl}...`);
-            const response = await fetch(apiUrl, {
-                method: event.request.method,
-                headers: headers,
-                body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? body : undefined,
-                // @ts-ignore
-                duplex: 'half', // streaming bodyのために必要
-                signal: AbortSignal.timeout(300000) // 5分のタイムアウト（大きなPDFの処理用）
-            });
-            console.log(`Response status: ${response.status}`);
+            
+            // 状態チェックリクエストには適切なタイムアウトを設定
+            const isStatusCheck = event.url.pathname.includes('/status');
+            const timeout = isStatusCheck ? 10000 : 300000; // 状態チェック: 10秒、その他: 5分
+            
+            // 状態チェックリクエストにはリトライロジックを追加
+            let lastError: Error | null = null;
+            const maxRetries = isStatusCheck ? 3 : 1;
+            
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: event.request.method,
+                        headers: headers,
+                        body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? body : undefined,
+                        // @ts-ignore
+                        duplex: 'half', // streaming bodyのために必要
+                        signal: AbortSignal.timeout(timeout)
+                    });
+                    console.log(`Response status: ${response.status}`);
+                    
+                    // レスポンスヘッダーをコピー
+                    const responseHeaders = new Headers();
+                    response.headers.forEach((value, key) => {
+                        responseHeaders.set(key, value);
+                    });
 
-            // レスポンスヘッダーをコピー
-            const responseHeaders = new Headers();
-            response.headers.forEach((value, key) => {
-                responseHeaders.set(key, value);
-            });
-
-            return new Response(response.body, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: responseHeaders
-            });
+                    return new Response(response.body, {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: responseHeaders
+                    });
+                } catch (error) {
+                    lastError = error as Error;
+                    if (attempt < maxRetries - 1) {
+                        // リトライ前に少し待機
+                        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+                        console.log(`Retrying request (attempt ${attempt + 1}/${maxRetries})...`);
+                    }
+                }
+            }
+            
+            // すべてのリトライが失敗した場合
+            throw lastError || new Error('Request failed after retries');
         } catch (error) {
             console.error('Proxy error:', error);
             console.error('Failed URL:', apiUrl);
