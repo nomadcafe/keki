@@ -29,8 +29,9 @@ class Job(Base):
     metadata_json = Column(Text, nullable=True)  # JSON形式のメタデータ
 
     def to_dict(self):
-        """辞書形式に変換（Pydanticモデル互換）"""
-        return {
+        """辞書形式に変換（Pydanticモデル互換）。metadataはAPIキーを除いて含める。"""
+        import json
+        data = {
             "job_id": self.job_id,
             "status": self.status,
             "status_code": self.status_code,
@@ -42,6 +43,15 @@ class Job(Base):
             "estimated_duration": self.estimated_duration,
             "target_duration": self.target_duration
         }
+        if self.metadata_json:
+            try:
+                meta = json.loads(self.metadata_json)
+                # 機密情報を除外してフロントに返す
+                meta_safe = {k: v for k, v in meta.items() if k not in ("api_key", "provider")}
+                data["metadata"] = meta_safe
+            except Exception:
+                pass
+        return data
 
 
 

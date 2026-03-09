@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
   import { authenticatedFetch, getApiKey, getDefaultProvider } from "$lib/auth.ts";
   import { t } from "$lib/i18n/index.js";
   import TimelineEditor from "$lib/TimelineEditor.svelte";
@@ -196,6 +197,28 @@
     loadSpeakers();
     // APIキーの設定状態をチェック
     await checkApiKeyStatus();
+
+    // 履歴から「再編集」で遷移した場合: URL の job_id でジョブを読み込む
+    const jobIdFromUrl = $page.url.searchParams.get("job_id");
+    if (jobIdFromUrl) {
+      try {
+        const res = await fetch(`/api/jobs/${jobIdFromUrl}/status`);
+        if (res.ok) {
+          const status = await res.json();
+          currentJob = {
+            job_id: status.job_id,
+            status: status.status,
+            status_code: status.status_code,
+            progress: status.progress ?? 0,
+            result_url: status.result_url,
+            error_code: status.error_code,
+          };
+          await loadDialogue(jobIdFromUrl, true);
+        }
+      } catch (e) {
+        console.error("履歴ジョブの読み込みに失敗しました:", e);
+      }
+    }
   });
 
   async function checkAuthStatus() {
@@ -768,9 +791,11 @@
     return `${minutes}分${secs}秒`;
   }
 
-  async function updateDialogue(jobId: string) {
+  async function updateDialogue(jobId: string, data?: DialogueData | null) {
     try {
       isUpdatingDialogue = true;
+      const payload = data ?? dialogueData;
+      if (!payload) return;
 
       const response = await fetch(`/api/jobs/${jobId}/dialogue`, {
         method: "PUT",
@@ -779,7 +804,7 @@
         },
         body: JSON.stringify({
           job_id: jobId,
-          dialogue_data: dialogueData,
+          dialogue_data: payload,
         }),
       });
 
@@ -1562,7 +1587,7 @@
           onUpdate={(updatedData) => {
             dialogueData = updatedData;
             if (currentJob) {
-              updateDialogue(currentJob.job_id);
+              updateDialogue(currentJob.job_id, updatedData);
             }
           }}
         />

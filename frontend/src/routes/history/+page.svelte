@@ -13,12 +13,26 @@
 		error_code?: string | null;
 		estimated_duration?: number | null;
 		target_duration?: number | null;
+		metadata?: { original_pdf_filename?: string; [key: string]: unknown };
 	}
 
 	let jobs: Job[] = [];
 	let isLoading = true;
 	let error: string | null = null;
 	let deletingJobId: string | null = null;
+	let searchText = '';
+	let statusFilter = ''; // '' = すべて, completed, failed, processing, pending
+
+	// 検索・フィルタ適用後の一覧（クライアント側）
+	$: filteredJobs = jobs.filter((job) => {
+		const matchStatus = !statusFilter || job.status === statusFilter;
+		if (!matchStatus) return false;
+		if (!searchText.trim()) return true;
+		const q = searchText.trim().toLowerCase();
+		const filename = (job.metadata?.original_pdf_filename ?? '').toLowerCase();
+		const id = job.job_id.toLowerCase();
+		return filename.includes(q) || id.includes(q);
+	});
 
 	onMount(async () => {
 		await loadJobs();
@@ -136,14 +150,29 @@
 		<div style="width: 100px;"></div>
 	</div>
 
-	<div class="actions">
-		<button
-			on:click={loadJobs}
-			class="refresh-button"
-			disabled={isLoading}
-		>
-			🔄 更新
-		</button>
+	<div class="filters">
+		<div class="filter-row">
+			<input
+				type="text"
+				bind:value={searchText}
+				placeholder="PDFファイル名またはジョブIDで検索..."
+				class="search-input"
+			/>
+			<select bind:value={statusFilter} class="status-select">
+				<option value="">すべてのステータス</option>
+				<option value="completed">完了</option>
+				<option value="processing">処理中</option>
+				<option value="pending">待機中</option>
+				<option value="failed">失敗</option>
+			</select>
+			<button
+				on:click={loadJobs}
+				class="refresh-button"
+				disabled={isLoading}
+			>
+				🔄 更新
+			</button>
+		</div>
 	</div>
 
 	{#if isLoading}
@@ -161,16 +190,31 @@
 			<p>📭 ジョブ履歴がありません</p>
 			<p class="empty-hint">PDFをアップロードして動画を生成すると、ここに履歴が表示されます。</p>
 		</div>
+	{:else if filteredJobs.length === 0}
+		<div class="empty-container">
+			<p>🔍 検索条件に一致するジョブがありません</p>
+			<p class="empty-hint">検索ワードまたはステータスフィルタを変えてください。</p>
+		</div>
 	{:else}
 		<div class="jobs-list">
 			<div class="jobs-header">
-				<span class="jobs-count">全 {jobs.length} 件のジョブ</span>
+				<span class="jobs-count">
+					{filteredJobs.length} 件を表示
+					{#if jobs.length !== filteredJobs.length}
+						（全 {jobs.length} 件中）
+					{/if}
+				</span>
 			</div>
 
-			{#each jobs as job (job.job_id)}
+			{#each filteredJobs as job (job.job_id)}
 				<div class="job-card">
 					<div class="job-header">
 						<div class="job-info">
+							{#if job.metadata?.original_pdf_filename}
+								<div class="job-filename" title={job.metadata.original_pdf_filename}>
+									📄 {job.metadata.original_pdf_filename}
+								</div>
+							{/if}
 							<div class="job-id">
 								<strong>ジョブID:</strong> 
 								<span class="job-id-value">{job.job_id.substring(0, 8)}...</span>
@@ -197,9 +241,9 @@
 							<button
 								on:click={() => viewJob(job.job_id)}
 								class="action-button view-button"
-								title="ジョブを表示"
+								title="編集画面で開く"
 							>
-								👁️ 表示
+								✏️ 再編集
 							</button>
 							<button
 								on:click={() => deleteJob(job.job_id)}
@@ -288,10 +332,47 @@
 		margin: 0;
 	}
 
-	.actions {
+	.filters {
 		margin-bottom: 1.5rem;
+	}
+
+	.filter-row {
 		display: flex;
-		justify-content: flex-end;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		align-items: center;
+	}
+
+	.search-input {
+		flex: 1;
+		min-width: 200px;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		font-size: 0.9rem;
+	}
+
+	.search-input:focus {
+		outline: none;
+		border-color: #3b82f6;
+		box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+	}
+
+	.status-select {
+		padding: 0.5rem 0.75rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		font-size: 0.9rem;
+		background: white;
+	}
+
+	.job-filename {
+		font-size: 0.95rem;
+		color: #1f2937;
+		margin-bottom: 0.35rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.refresh-button {

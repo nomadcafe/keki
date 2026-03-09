@@ -139,11 +139,13 @@ class JobService:
             db.close()
     
     @staticmethod
-    def list_jobs(limit: Optional[int] = None, offset: int = 0) -> List[Job]:
-        """ジョブリストを取得"""
+    def list_jobs(limit: Optional[int] = None, offset: int = 0, status: Optional[str] = None) -> List[Job]:
+        """ジョブリストを取得（オプション: statusでフィルタ）"""
         db = get_db_session()
         try:
             query = db.query(Job).order_by(Job.created_at.desc())
+            if status:
+                query = query.filter(Job.status == status)
             if limit:
                 query = query.limit(limit).offset(offset)
             return query.all()
@@ -151,9 +153,9 @@ class JobService:
             db.close()
     
     @staticmethod
-    def list_jobs_dict(limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
-        """ジョブリストを辞書形式で取得"""
-        jobs = JobService.list_jobs(limit, offset)
+    def list_jobs_dict(limit: Optional[int] = None, offset: int = 0, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """ジョブリストを辞書形式で取得（metadata含む）"""
+        jobs = JobService.list_jobs(limit, offset, status)
         return [job.to_dict() for job in jobs]
     
     @staticmethod

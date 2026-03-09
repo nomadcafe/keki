@@ -1,7 +1,7 @@
 """
 ジョブ関連のルート
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Response
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Response, Query
 from fastapi.responses import FileResponse
 from fastapi import Form
 from typing import Optional, List, Dict
@@ -14,6 +14,7 @@ import io
 import uuid
 import asyncio
 import threading
+import wave
 
 from api.models.job import (
     JobStatus, JobCreateResponse, GenerateAudioRequest, 
@@ -168,6 +169,7 @@ async def upload_pdf(
     
     # ジョブ情報をデータベースに保存
     metadata = {
+        "original_pdf_filename": safe_pdf_name,
         "target_duration": target_duration,
         "speaker1": {"id": speaker1_id, "name": speaker1_name, "speed": speaker1_speed},
         "speaker2": {"id": speaker2_id, "name": speaker2_name, "speed": speaker2_speed},
@@ -226,10 +228,15 @@ async def get_job_status(job_id: str):
     return jobs_db[job_id]
 
 
-@router.get("", response_model=List[JobStatus])
-async def list_jobs():
-    """全ジョブのリストを取得"""
-    return list(jobs_db.values())
+@router.get("")
+async def list_jobs(
+    limit: Optional[int] = Query(None, description="取得件数"),
+    offset: int = Query(0, ge=0, description="オフセット"),
+    status: Optional[str] = Query(None, description="ステータスでフィルタ (pending, processing, completed, failed)")
+):
+    """ジョブ一覧を取得（履歴画面用）。limit/offset/statusで絞り込み可能。metadata（PDFファイル名等）を含む。"""
+    jobs = JobService.list_jobs_dict(limit=limit, offset=offset, status=status)
+    return jobs
 
 
 @router.delete("/{job_id}")
@@ -812,6 +819,43 @@ async def get_dialogue(job_id: str):
             "formatted": format_duration(total_seconds)
         }
     }
+
+
+@router.get("/{job_id}/dialogue/timing")
+async def get_dialogue_timing(job_id: str):
+    """各対話の音声ファイルの実長（秒）を返す。タイムラインエディターで実長表示するために使用。"""
+    data_dir = Path.cwd() / "data" / job_id
+    dialogue_path = data_dir / "dialogue_narration_original.json"
+    audio_dir = Path.cwd() / "audio" / job_id
+
+    if not dialogue_path.exists():
+        raise HTTPException(status_code=404, detail="対話スクリプトが見つかりません")
+
+    with open(dialogue_path, "r", encoding="utf-8") as f:
+        dialogue_data = json.load(f)
+
+    result: Dict[str, List[Dict]] = {}
+    for slide_key in sorted(dialogue_data.keys(), key=lambda x: int(x.split("_")[1])):
+        dialogues = dialogue_data[slide_key]
+        result[slide_key] = []
+        slide_num = int(slide_key.split("_")[1])
+        for idx, d in enumerate(dialogues):
+            speaker = d.get("speaker", "speaker1")
+            # ファイル名: slide_001_001_speaker1.wav
+            wav_name = f"slide_{slide_num:03d}_{idx + 1:03d}_{speaker}.wav"
+            wav_path = audio_dir / wav_name
+            duration_sec = None
+            if wav_path.exists():
+                try:
+                    with wave.open(str(wav_path), "rb") as wf:
+                        frames = wf.getnframes()
+                        rate = wf.getframerate()
+                        duration_sec = round(frames / float(rate), 2)
+                except Exception:
+                    pass
+            result[slide_key].append({"duration": duration_sec})
+
+    return result
 
 
 @router.get("/{job_id}/metadata")

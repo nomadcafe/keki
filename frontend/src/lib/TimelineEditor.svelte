@@ -35,6 +35,8 @@
   }
 
   let timelineSegments: TimelineSegment[] = [];
+  // APIから取得した各対話の実音声長（秒）。キー: slideKey, 値: { duration: number | null }[]
+  let audioTiming: Record<string, { duration: number | null }[]> = {};
 
   // 音声の推定時間を計算（簡易版：文字数ベース）
   function estimateAudioDuration(text: string, speaker: string): number {
@@ -49,7 +51,7 @@
     return Math.max(minDuration, Math.min(maxDuration, baseDuration));
   }
 
-  // タイムラインセグメントを計算
+  // タイムラインセグメントを計算（保存済み startTime/duration、実音声長、推定の順で利用）
   function calculateTimelineSegments() {
     const segments: TimelineSegment[] = [];
     let currentTime = 0;
@@ -66,11 +68,25 @@
       const slideNum = parseInt(slideKey.split("_")[1]);
       const dialogues = dialogueData[slideKey] || [];
       const slideStartTime = currentTime;
+      const timingForSlide = audioTiming[slideKey] || [];
 
-      const dialogueSegments = dialogues.map((dialogue, index) => {
-        const duration = estimateAudioDuration(dialogue.text, dialogue.speaker);
-        const startTime = currentTime;
-        const endTime = currentTime + duration;
+      const dialogueSegments = dialogues.map((dialogue: { speaker: string; text: string; startTime?: number; duration?: number }, index: number) => {
+        // 優先: 保存済みの startTime/duration → APIの実音声長 → 文字数推定
+        let duration: number;
+        if (typeof dialogue.duration === "number" && dialogue.duration > 0) {
+          duration = dialogue.duration;
+        } else if (timingForSlide[index]?.duration != null) {
+          duration = timingForSlide[index].duration as number;
+        } else {
+          duration = estimateAudioDuration(dialogue.text, dialogue.speaker);
+        }
+        let startTime: number;
+        if (typeof dialogue.startTime === "number" && dialogue.startTime >= 0) {
+          startTime = Math.max(currentTime, dialogue.startTime);
+        } else {
+          startTime = currentTime;
+        }
+        const endTime = startTime + duration;
         currentTime = endTime + pauseBetweenDialogues;
 
         return {
@@ -82,7 +98,7 @@
         };
       });
 
-      const slideEndTime = dialogueSegments.length > 0 
+      const slideEndTime = dialogueSegments.length > 0
         ? dialogueSegments[dialogueSegments.length - 1].endTime
         : slideStartTime + 3.0; // デフォルト3秒
 
@@ -235,13 +251,31 @@
     timelineEndTime = Math.max(timelineEndTime, currentTime + 10);
   }
 
-  // 対話データを更新
+  // タイムラインの変更を対話データにマージしてAPI保存用に渡す
   function updateDialogueData() {
-    // タイムラインの変更をdialogueDataに反映
-    // この実装では、時間の変更は保持するが、テキストは変更しない
-    if (onUpdate) {
-      onUpdate(dialogueData);
+    if (!onUpdate) return;
+    const slideKeys = Object.keys(dialogueData).sort((a, b) => {
+      const numA = parseInt(a.split("_")[1]);
+      const numB = parseInt(b.split("_")[1]);
+      return numA - numB;
+    });
+    const payload: Record<string, Array<{ speaker: string; text: string; startTime?: number; duration?: number }>> = {};
+    for (const slideKey of slideKeys) {
+      const dialogues = dialogueData[slideKey] || [];
+      const segment = timelineSegments.find((s) => s.slideKey === slideKey);
+      payload[slideKey] = dialogues.map((d, index) => {
+        const item: { speaker: string; text: string; startTime?: number; duration?: number } = {
+          speaker: d.speaker,
+          text: d.text
+        };
+        if (segment?.dialogues[index]) {
+          item.startTime = Math.round(segment.dialogues[index].startTime * 10) / 10;
+          item.duration = Math.round(segment.dialogues[index].duration * 10) / 10;
+        }
+        return item;
+      });
     }
+    onUpdate(payload);
   }
 
   // 時間を直接編集
@@ -267,26 +301,46 @@
     }
   }
 
+  // 実音声長をAPIから取得（タイムラインで実長表示するため）
+  async function fetchAudioTiming() {
+    if (!jobId || !dialogueData || Object.keys(dialogueData).length === 0) return;
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/dialogue/timing`);
+      if (res.ok) {
+        const data = await res.json();
+        audioTiming = data;
+      }
+    } catch (e) {
+      console.warn("タイムライン: 音声長の取得に失敗しました", e);
+    }
+  }
+
   // 初期化
   onMount(() => {
     calculateTimelineSegments();
-    
+    fetchAudioTiming().then(() => calculateTimelineSegments());
+
     // グローバルマウスイベント
     const handleMouseMove = (e: MouseEvent) => handleDragMove(e);
     const handleMouseUp = () => handleDragEnd();
-    
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
 
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
     };
   });
 
-  // dialogueDataが変更されたら再計算
-  $: if (dialogueData) {
+  // dialogueData または jobId が変わったら再計算（まず推定で表示し、実音声長取得後に再描画）
+  $: if (dialogueData && Object.keys(dialogueData).length > 0) {
     calculateTimelineSegments();
+    if (jobId) {
+      fetchAudioTiming().then(() => calculateTimelineSegments());
+    } else {
+      audioTiming = {};
+    }
   }
 </script>
 
