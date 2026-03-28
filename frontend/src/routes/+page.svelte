@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { authenticatedFetch, getApiKey, getDefaultProvider } from "$lib/auth.ts";
@@ -10,7 +10,7 @@
   interface Job {
     job_id: string;
     status: string;
-    status_code: string;
+    status_code?: string;
     progress: number;
     result_url?: string;
     error_code?: string;
@@ -80,6 +80,10 @@
   let transitionType = "crossfade"; // 転場タイプ
   let transitionDuration = 0.4; // 転場時間（秒）
   let showVideoSettings = false; // 動画設定パネルの表示状態
+  // リアルタイムプレビュー（スライドフォーカス・音声プレビュー）
+  let previewSlideKey: string | null = null; // フォーカス中スライドのキー（slide_N）
+  let voicePreviewKey: string | null = null; // 「slideKey_index」ローディング表示用
+  let previewAudioEl: HTMLAudioElement | null = null; // プレビュー再生用（前回URL解放）
 
   // ステータス表示用のヘルパー関数
   function getDisplayStatus(job: Job): string {
@@ -92,6 +96,105 @@
 
   function getDisplayError(job: Job): string {
     return job.error_code ? t(`errors.${job.error_code}`) : "";
+  }
+
+  /** 対話の speaker 値から VOICEVOX 用の style_id / 名前 / 速度を取得 */
+  function getVoiceParamsForDialogueSpeaker(speaker: string): {
+    id: number;
+    name: string;
+    speed: number;
+  } | null {
+    if (!currentJobMetadata) return null;
+    if (speaker === "speaker1" || speaker === "metan") {
+      return {
+        id: currentJobMetadata.speaker1?.id ?? selectedSpeaker1Id ?? 2,
+        name: currentJobMetadata.speaker1?.name ?? "四国めたん",
+        speed:
+          currentJobMetadata.speaker1?.speed != null
+            ? currentJobMetadata.speaker1.speed
+            : speaker1Speed,
+      };
+    }
+    if (speaker === "speaker2" || speaker === "zundamon") {
+      return {
+        id: currentJobMetadata.speaker2?.id ?? selectedSpeaker2Id ?? 3,
+        name: currentJobMetadata.speaker2?.name ?? "ずんだもん",
+        speed:
+          currentJobMetadata.speaker2?.speed != null
+            ? currentJobMetadata.speaker2.speed
+            : speaker2Speed,
+      };
+    }
+    return {
+      id: selectedSpeaker2Id ?? 3,
+      name: String(speaker),
+      speed: speaker2Speed,
+    };
+  }
+
+  /** 全文音声合成前に、当該セリフのみ VOICEVOX で試聴 */
+  async function previewDialogueLine(
+    slideKey: string,
+    index: number,
+    text: string,
+    speaker: string
+  ) {
+    const key = `${slideKey}_${index}`;
+    const trimmed = text.trim();
+    if (!trimmed) {
+      alert("テキストを入力してください");
+      return;
+    }
+    const params = getVoiceParamsForDialogueSpeaker(speaker);
+    if (!params) {
+      alert("話者情報を読み込めません。しばらく待ってから再度お試しください。");
+      return;
+    }
+    const previewText =
+      trimmed.length > 400 ? trimmed.slice(0, 400) + "…" : trimmed;
+    voicePreviewKey = key;
+    try {
+      const response = await fetch("/api/voice-sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          speaker_id: params.id,
+          speaker_name: params.name,
+          speed: params.speed,
+          text: previewText,
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(err || "音声プレビューに失敗しました");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      if (previewAudioEl) {
+        previewAudioEl.pause();
+        if (previewAudioEl.src.startsWith("blob:")) {
+          URL.revokeObjectURL(previewAudioEl.src);
+        }
+      }
+      previewAudioEl = new Audio(url);
+      previewAudioEl.play();
+      previewAudioEl.addEventListener("ended", () => {
+        URL.revokeObjectURL(url);
+      });
+    } catch (e) {
+      console.error(e);
+      alert("音声プレビューに失敗しました。VOICEVOX が起動しているか確認してください。");
+    } finally {
+      voicePreviewKey = null;
+    }
+  }
+
+  function setFirstSlideAsPreview() {
+    if (!dialogueData) return;
+    const keys = Object.keys(dialogueData).sort(
+      (a, b) => parseInt(a.split("_")[1]) - parseInt(b.split("_")[1])
+    );
+    previewSlideKey = keys[0] ?? null;
   }
 
   // 会話スタイルの定義
@@ -218,6 +321,16 @@
       } catch (e) {
         console.error("履歴ジョブの読み込みに失敗しました:", e);
       }
+    }
+  });
+
+  onDestroy(() => {
+    if (previewAudioEl) {
+      previewAudioEl.pause();
+      if (previewAudioEl.src.startsWith("blob:")) {
+        URL.revokeObjectURL(previewAudioEl.src);
+      }
+      previewAudioEl = null;
     }
   });
 
@@ -1366,6 +1479,65 @@
         {/if}
       </div>
 
+      <!-- 段階的プレビュー：制作フローの現在位置 -->
+      {#if currentJob}
+        {@const sc = (currentJob.status_code || "").toString()}
+        {@const st = currentJob.status || ""}
+        {@const audioPhaseDone =
+          st === "completed" || sc.includes("VIDEO") || sc === "AUDIO_COMPLETED"}
+        {@const audioPhaseActive = !audioPhaseDone && sc.includes("AUDIO")}
+        <div
+          class="preview-pipeline"
+          role="navigation"
+          aria-label="制作フローの進行状況"
+        >
+          <div class="preview-pipeline-title">📍 制作ステップ</div>
+          <div class="preview-pipeline-steps">
+            <span
+              class="pipeline-step {slides.length > 0
+                ? 'done'
+                : st === 'processing'
+                  ? 'active'
+                  : 'pending'}"
+            >
+              ① PDF・スライド
+            </span>
+            <span class="pipeline-arrow">→</span>
+            <span
+              class="pipeline-step {dialogueData
+                ? currentStep === 'dialogue'
+                  ? 'active'
+                  : 'done'
+                : 'pending'}"
+            >
+              ② 対話スクリプト
+            </span>
+            <span class="pipeline-arrow">→</span>
+            <span
+              class="pipeline-step {audioPhaseDone
+                ? 'done'
+                : audioPhaseActive
+                  ? 'active'
+                  : dialogueData
+                    ? 'pending'
+                    : 'pending'}"
+            >
+              ③ 音声合成
+            </span>
+            <span class="pipeline-arrow">→</span>
+            <span
+              class="pipeline-step {st === 'completed'
+                ? 'done'
+                : sc.includes('VIDEO') || currentStep === 'video'
+                  ? 'active'
+                  : 'pending'}"
+            >
+              ④ 動画
+            </span>
+          </div>
+        </div>
+      {/if}
+
       <div class="dialogue-controls">
         <button
           class="back-to-settings-btn"
@@ -1548,21 +1720,26 @@
       </div>
 
       <div class="edit-controls">
-        <div class="view-mode-toggle">
-          <button
-            class="view-btn {viewMode === 'list' ? 'active' : ''}"
-            on:click={() => viewMode = 'list'}
-            title="リスト表示"
-          >
-            📋 リスト
-          </button>
-          <button
-            class="view-btn {viewMode === 'timeline' ? 'active' : ''}"
-            on:click={() => viewMode = 'timeline'}
-            title="タイムライン表示"
-          >
-            ⏱️ タイムライン
-          </button>
+        <div class="edit-controls-left">
+          <div class="view-mode-toggle">
+            <button
+              class="view-btn {viewMode === 'list' ? 'active' : ''}"
+              on:click={() => viewMode = 'list'}
+              title="リスト表示"
+            >
+              📋 リスト
+            </button>
+            <button
+              class="view-btn {viewMode === 'timeline' ? 'active' : ''}"
+              on:click={() => viewMode = 'timeline'}
+              title="タイムライン表示"
+            >
+              ⏱️ タイムライン
+            </button>
+          </div>
+          <p class="view-mode-preview-hint">
+            💡 スライド拡大プレビュー・セリフの音声試聴は「リスト」表示で利用できます
+          </p>
         </div>
         <button
           class="edit-btn"
@@ -1571,7 +1748,11 @@
               // 編集を終了する前に保存
               await updateDialogue(currentJob.job_id);
             }
+            const enteringEdit = !editingDialogue;
             editingDialogue = !editingDialogue;
+            if (enteringEdit) {
+              setFirstSlideAsPreview();
+            }
           }}
         >
           {editingDialogue ? "編集を終了" : "✏️ スクリプトを編集"}
@@ -1592,6 +1773,33 @@
           }}
         />
       {:else}
+      {#if editingDialogue && slides.length > 0}
+        <div class="realtime-slide-preview">
+          <div class="realtime-preview-header">
+            <span class="realtime-preview-title">👁️ リアルタイムスライドプレビュー</span>
+            <span class="realtime-preview-hint"
+              >テキストを編集するスライドのエリアをクリックすると、そのスライドを大きく表示します</span
+            >
+          </div>
+          {#if previewSlideKey}
+            {@const previewNum = parseInt(previewSlideKey.split("_")[1])}
+            {@const previewSlide = slides.find(
+              (s) => s.slide_number === previewNum
+            )}
+            {#if previewSlide}
+              <div class="realtime-preview-body">
+                <img
+                  src={previewSlide.url}
+                  alt="スライド {previewNum}"
+                  class="realtime-preview-image"
+                />
+              </div>
+            {/if}
+          {:else}
+            <p class="realtime-preview-empty">スライドを選択してください</p>
+          {/if}
+        </div>
+      {/if}
       <div class="dialogue-list">
         {#each Object.entries(dialogueData) as [slideKey, dialogues]}
           {@const slideNum = parseInt(slideKey.split("_")[1])}
@@ -1674,7 +1882,12 @@
               </div>
             {/if}
             {#each dialogues as dialogue, index}
-              <div class="dialogue-item">
+              <div
+                class="dialogue-item"
+                on:focusin={() => {
+                  previewSlideKey = slideKey;
+                }}
+              >
                 <div class="speaker-label {dialogue.speaker}">
                   {#if dialogue.speaker === "speaker1"}
                     {currentJobMetadata?.speaker1?.name || "話者1"}
@@ -1688,21 +1901,44 @@
                     {dialogue.speaker}
                   {/if}
                 </div>
-                {#if editingDialogue}
-                  <textarea
-                    bind:value={dialogue.text}
-                    class="dialogue-text-edit"
-                    rows="2"
-                  ></textarea>
+                <div class="dialogue-item-main">
+                  {#if editingDialogue}
+                    <textarea
+                      bind:value={dialogue.text}
+                      class="dialogue-text-edit"
+                      rows="2"
+                      on:focus={() => {
+                        previewSlideKey = slideKey;
+                      }}
+                    ></textarea>
+                    <button
+                      class="remove-btn"
+                      on:click={() => removeDialogueItem(slideKey, index)}
+                    >
+                      ✕
+                    </button>
+                  {:else}
+                    <div class="dialogue-text">{dialogue.text}</div>
+                  {/if}
                   <button
-                    class="remove-btn"
-                    on:click={() => removeDialogueItem(slideKey, index)}
+                    type="button"
+                    class="voice-preview-line-btn"
+                    title="このセリフをVOICEVOXで試聴（全文合成前のプレビュー）"
+                    disabled={voicePreviewKey === `${slideKey}_${index}` ||
+                      !dialogue.text?.trim()}
+                    on:click={() =>
+                      previewDialogueLine(
+                        slideKey,
+                        index,
+                        dialogue.text,
+                        dialogue.speaker
+                      )}
                   >
-                    ✕
+                    {voicePreviewKey === `${slideKey}_${index}`
+                      ? "⏳"
+                      : "🔊"} 試聴
                   </button>
-                {:else}
-                  <div class="dialogue-text">{dialogue.text}</div>
-                {/if}
+                </div>
               </div>
             {/each}
             {#if editingDialogue}
@@ -2054,6 +2290,115 @@
     font-weight: 500;
   }
 
+  /* 段階的プレビュー：制作ステップ表示 */
+  .preview-pipeline {
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    border: 1px solid #c4b5fd;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .preview-pipeline-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #5b21b6;
+    margin-bottom: 0.5rem;
+  }
+
+  .preview-pipeline-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.25rem;
+    font-size: 0.8rem;
+  }
+
+  .pipeline-step {
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    font-weight: 500;
+    color: #6b7280;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+  }
+
+  .pipeline-step.done {
+    color: #065f46;
+    background: #d1fae5;
+    border-color: #6ee7b7;
+  }
+
+  .pipeline-step.active {
+    color: #1e40af;
+    background: #dbeafe;
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  }
+
+  .pipeline-step.pending {
+    opacity: 0.85;
+  }
+
+  .pipeline-arrow {
+    color: #9ca3af;
+    font-size: 0.75rem;
+    user-select: none;
+  }
+
+  /* 編集中のスライド拡大プレビュー */
+  .realtime-slide-preview {
+    background: #fff;
+    border: 2px solid #a78bfa;
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 4px 14px rgba(124, 58, 237, 0.12);
+  }
+
+  .realtime-preview-header {
+    margin-bottom: 0.75rem;
+  }
+
+  .realtime-preview-title {
+    display: block;
+    font-weight: 700;
+    color: #5b21b6;
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .realtime-preview-hint {
+    font-size: 0.8rem;
+    color: #6b7280;
+    line-height: 1.4;
+  }
+
+  .realtime-preview-body {
+    border-radius: 8px;
+    overflow: hidden;
+    background: #111827;
+    text-align: center;
+    max-height: 320px;
+  }
+
+  .realtime-preview-image {
+    max-width: 100%;
+    max-height: 320px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    vertical-align: middle;
+  }
+
+  .realtime-preview-empty {
+    font-size: 0.875rem;
+    color: #9ca3af;
+    margin: 0;
+    padding: 1rem;
+    text-align: center;
+  }
+
   /* 重要度調整UI */
   .importance-control {
     background-color: #f9fafb;
@@ -2163,12 +2508,28 @@
     margin-bottom: 2rem;
   }
 
+  .edit-controls-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .view-mode-preview-hint {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #6b7280;
+    line-height: 1.4;
+  }
+
   .edit-controls {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
     gap: 1rem;
+    flex-wrap: wrap;
   }
 
   .view-mode-toggle {
@@ -2375,6 +2736,43 @@
     align-items: flex-start;
     margin-bottom: 0.75rem;
     gap: 0.75rem;
+  }
+
+  .dialogue-item-main {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .dialogue-item-main .dialogue-text,
+  .dialogue-item-main .dialogue-text-edit {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  .voice-preview-line-btn {
+    flex-shrink: 0;
+    align-self: flex-start;
+    background: #7c3aed;
+    color: white;
+    border: none;
+    padding: 0.35rem 0.65rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .voice-preview-line-btn:hover:not(:disabled) {
+    background: #6d28d9;
+  }
+
+  .voice-preview-line-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .speaker-label {
