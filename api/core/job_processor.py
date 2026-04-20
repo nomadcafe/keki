@@ -18,6 +18,9 @@ from api.core.status_codes import StatusCode
 from api.core.async_worker import async_worker
 from api.database.job_service import JobService
 
+# 重い依存（pdf2image, moviepy, librosa 等）を伴うモジュールは lazy import する。
+# 起動時の失敗を抑え、プロセスが立ち上がらなくなる事態を避けるため。
+
 # ログ設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,8 +32,8 @@ class JobProcessor:
     def process_pdf_sync(job_id: str, pdf_path: str, jobs_db: Dict[str, Any]) -> int:
         """PDF処理の同期版（ワーカーで実行される）"""
         try:
-            from api.core.pdf_processor import PDFProcessor
-            
+            from api.core.pdf_processor import PDFProcessor  # lazy: 重い依存
+
             # データベースに状態を保存
             JobService.update_job(
                 job_id=job_id,
@@ -68,10 +71,9 @@ class JobProcessor:
     def generate_dialogue_sync(job_id: str, additional_prompt: Optional[str], jobs_db: Dict[str, Any], api_key: Optional[str] = None, provider: Optional[str] = None) -> None:
         """対話生成の同期版（ワーカーで実行される）"""
         try:
-            import asyncio
-            from api.core.dialogue_generator import DialogueGenerator
+            from api.core.dialogue_generator import DialogueGenerator  # lazy: 重い依存
             from api.core.text_extractor import TextExtractor
-            
+
             # データベースに状態を保存
             JobService.update_job(
                 job_id=job_id,
@@ -151,12 +153,12 @@ class JobProcessor:
             raise
     
     @staticmethod
-    def generate_audio_sync(job_id: str, speed_scale: float, pitch_scale: float, 
+    def generate_audio_sync(job_id: str, speed_scale: float, pitch_scale: float,
                           intonation_scale: float, volume_scale: float, jobs_db: Dict[str, Any]) -> None:
         """音声生成の同期版（ワーカーで実行される）"""
         try:
-            from api.core.audio_generator import AudioGenerator
-            
+            from api.core.audio_generator import AudioGenerator  # lazy: 重い依存
+
             # データベースに状態を保存
             JobService.update_job(
                 job_id=job_id,
@@ -198,9 +200,8 @@ class JobProcessor:
     def create_video_sync(job_id: str, jobs_db: Dict[str, Any]) -> str:
         """動画作成の同期版（ワーカーで実行される）"""
         try:
-            from api.core.video_creator import VideoCreator
-            import json
-            
+            from api.core.video_creator import VideoCreator  # lazy: 重い依存
+
             # データベースに状態を保存
             JobService.update_job(
                 job_id=job_id,

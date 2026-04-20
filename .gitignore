@@ -83,6 +83,7 @@ temp-audio*
 # Test files
 test_*.mp4
 test_*.py
+!tests/test_*.py
 
 # Backup and temporary scripts
 *_old.py

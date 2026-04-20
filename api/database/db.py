@@ -3,7 +3,8 @@
 """
 import os
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
 from api.database.models import Base
@@ -27,9 +28,35 @@ DATABASE_URL = f"sqlite:///{DB_PATH.absolute()}"
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},  # SQLite用の設定
-    echo=False  # デバッグ時は True に設定
+    connect_args={"check_same_thread": False, "timeout": 30},
+    echo=False
 )
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    """SQLite 接続時に並行性・安全性向上の PRAGMA を設定。
+
+    - WAL: 書き込み中でも読み取りがブロックされない
+    - busy_timeout: ロック待ちで即エラーにせず 5 秒待つ
+    - foreign_keys: 外部キー制約を有効化
+    - synchronous=NORMAL: WAL と組み合わせて安全性と性能のバランス
+    """
+    # sqlite3 以外の接続（テストで別 DB 使う場合など）に誤発動しないようガード
+    try:
+        import sqlite3
+        if not isinstance(dbapi_connection, sqlite3.Connection):
+            return
+    except ImportError:
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
 
 # セッションファクトリーを作成
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
